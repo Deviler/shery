@@ -5,7 +5,8 @@
 ## 主要思想：将所有数据转换为list列表进行处理，如同lua中的table进行各种逻辑实现
 
 ## tips
-NOWTIME="date +'%Y-%m-%d %H:%M:%S'"; NOW="echo [\`$NOWTIME\`][PID:$$]"
+NOWTIME="date +'%Y-%m-%d %H:%M:%S'"
+NOWTIPS="echo [$(date +'%Y-%m-%d %H:%M:%S')][PID:$$]"
 S_JOB_START(){
-    echo "`eval $NOW` job_start"
+    echo "$($NOWTIPS) job_start"
 }
