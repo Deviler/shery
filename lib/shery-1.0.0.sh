@@ -10,3 +10,26 @@ NOWTIPS="echo [$(date +'%Y-%m-%d %H:%M:%S')][PID:$$]"
 S_JOB_START(){
     echo "$($NOWTIPS) job_start"
 }
+S_JOB_SUCCESS(){
+    MSG="SUCC: $*"
+    echo -e "$($NOWTIPS) job_success:\n[$MSG]"
+    exit 0
+}
+S_JOB_FAILED(){
+    MSG="ERROR: $*"
+    echo -e "$($NOWTIPS) job_failed:\n[$MSG]"
+    exit 1
+}
+S_JOB_INFO(){
+    MSG="INFO: $*"
+    echo -e "$($NOWTIPS) job_info:\n[$MSG]"
+}
+S_JOB_WARN(){
+    MSG="WARN: $*"
+    echo -e "$($NOWTIPS) job_warn:\n[$MSG]"
+}
+S_SPLIT_LINE(){
+    echo -e "\n========================================"
+    echo -e "==========================================\n"
+}
+
