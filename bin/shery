@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+## shery - SSH批量执行工具
+## 版本: 1.0.1
+## 主要功能: 批量远程执行命令/脚本，支持参数化脚本执行
+
+set -x
+## 脚本路径定义
+BINPATH=$(cd $(dirname $0); pwd)
+LIBPATH=${BINPATH}/lib
+DATPATH=${BINPATH}/data
+LOGPATH=${BINPATH}/log
+SPTPATH=${BINPATH}/script
+SSHPATH=${DATPATH}/ssh
+CNFPATH=${DATPATH}/cnf
+
+## 创建必要目录
+mkdir -p ${LIBPATH} ${DATPATH} ${LOGPATH} ${SPTPATH} ${SSHPATH} ${CNFPATH} ${DATPATH}/ssh-* ${DATPATH}/cnf/*
+
+## 加载函数库
+source ${LIBPATH}/shery-1.0.1.sh
+
+## 日期时间定义
+DATE=$(date +'%Y%m%d')
+DATETIME=$(date +'%Y%m%d-%H%M%S')
+
+######## 程序主逻辑 ########
+main(){
+    ## 具体执行内容
+    echo
+    local lines instances user token result_list
+    local param=""
+    
+    # 参数处理
+    case $# in
+        0) ## 交互模式，需录入三个参数，"命令/脚本"、"实例"、"用户"，命令和实例支持多行输入
+            echo "请输入执行命令(脚本.sh):(脚本库中已录入脚本)" && tree -L 1 -D ${SPTPATH} && echo "-- (输入完毕后按Ctrl+D结束)" 
+            readarray -t lines
+            echo "输入执行命令(脚本.sh)完成"
+            S_SPLIT_LINE
+            
+            echo "请输入执行实例:(输入完毕后按Ctrl+D结束)" 
+            readarray -t instances
+            echo "输入执行实例完成"
+            S_SPLIT_LINE
+            
+            read -p "请输入执行用户：" user
+            echo "输入执行用户完成"
+            S_SPLIT_LINE
+            ;;
+            
+        3) ## 非交互模式，默认传入三个参数，"脚本"、"实例"、"用户"，实例支持多个实例输入，使用逗号分割
+            lines=$1
+            instances=$2
+            user=$3
+            S_SPLIT_VARS_TO_LIST ${instances} instances
+            S_SHOW_LIST lines
+            S_SHOW_LIST instances
+            S_SHOW_LIST user
+            ;;
+            
+        4) ## 非交互模式，补充传入第四个参数，"脚本参数"，具体参数文件存放在cnf目录，由该参数匹配
+            lines=$1
+            instances=$2
+            user=$3
+            param=$4
+            S_SPLIT_VARS_TO_LIST ${instances} instances
+            S_SHOW_LIST lines
+            S_SHOW_LIST instances
+            S_SHOW_LIST user
+            S_SHOW_LIST param
+            ;;
+            
+        *)
+            echo "用法: $0 [脚本名] [实例列表(逗号分隔)] [用户名] [参数文件(可选)]"
+            echo "示例: $0 test.sh host1,host2,host3 user01 config"
+            exit 1
+            ;;
+    esac
+    
+    ## 保存命令到文件
+    S_LIST_TO_FILE lines ${DATPATH}/${DATE}/${DATETIME}-cmd.list
+    S_LIST_TO_FILE lines ${DATPATH}/latest-cmd.list
+    
+    ## 判断认证token文件是否存在，存在则直接解码使用，不存在则需手工录入
+    if [ -f ${DATPATH}/token-${user}.encode ]; then
+        ## 认证token文件存在，直接解码使用
+        S_DECODE_BASE64_WITH_FREQ ${DATPATH}/token-${user}.encode token
+        token=$(echo $token | sed 's/\\$/\\$/g')
+    else
+        ## 认证token文件不存在，手工录入使用
+        read -s -p "请输入执行实例的账密：(请勿存在反斜杠\字符)" token
+        echo "输入执行实例账密完成"
+        S_ENCODE_BASE64_WITH_FREQ token ${DATPATH}/token-${user}.encode
+        token=$(echo $token | sed 's/\\$/\\$/g')
+    fi
+    
+    S_SPLIT_LINE
+    
+    ## 判断"脚本"是否存在，存在则按实例列表逐个执行，不存在则将命令生成文件按实例列表逐个执行
+    ## 执行过程：创建远端临时目录，传输执行脚本，触发脚本在远端执行
+    ## 增加从远端获取执行结果，并展示执行结果
+    echo "执行过程详情请看日志文件：${LOGPATH}/shery-exec-${DATETIME}.log"
+    
+    if [[ ${lines} == *.sh ]] && [ -f ${SPTPATH}/${lines} ]; then
+        ## "脚本"存在，按实例列表逐个执行
+        if [[ ${param}x == x ]]; then
+            ## 脚本参数变量不存在，正常执行
+            local EXPPATH=${SSHPATH}-${user}/${DATE}
+            local LOGFILE=${LOGPATH}/shery-exec-${DATETIME}.log
+            local SPTFILE=${SPTPATH}/${lines}
+            local EXPFILE=${SSHPATH}-${user}/${DATE}/${lines}
+            local EXPRES=${SSHPATH}-${user}/${DATE}/${lines}.result
+            
+            local i
+            for (( i=0; i<${#instances[*]}; i++ )); do
+                local RESULT=${DATPATH}/${DATE}/${DATETIME}-cmd.list.result.${instances[i]}
+                
+                S_SPLIT_LINE && S_JOB_INFO "当前执行实例为: ${user}@${instances[i]}"
+                
+                S_SSHX_MKDIR_EXPECT_WITHLOG ${user}@${instances[i]} ${EXPPATH} ${token} ${LOGFILE}
+                case "${?}" in
+                    0) 
+                        ;;
+                    *)
+                        S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPRES} ${token} ${RESULT} result_list
+                        continue
+                        ;;
+                esac
+                
+                S_SCP_UPLOAD_EXPECT_WITHLOG ${user}@${instances[i]} ${SPTFILE} ${token} ${LOGFILE}
+                S_SSHX_EXEC_EXPECT_WITHLOG ${user}@${instances[i]} ${EXPFILE} ${token} ${LOGFILE}
+                S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPRES} ${token} ${RESULT} result_list
+            done
+        else
+            ## 脚本参数变量存在，补充处理脚本参数文件
+            [[ -e ${CNFPATH}/${lines%.*}/${param}.conf ]] || S_JOB_FAILED "脚本参数文件不存在，请提前准备！！！"
+            
+            local EXPPATH=${SSHPATH}-${user}/${DATE}
+            local LOGFILE=${LOGPATH}/shery-exec-${DATETIME}.log
+            local SPTFILE=${SPTPATH}/${lines}
+            local CNFFILE=${CNFPATH}/${lines%.*}/${param}.conf
+            local EXPFILE=${SSHPATH}-${user}/${DATE}/${lines}
+            local EXPRES=${SSHPATH}-${user}/${DATE}/${lines}.result
+            
+            local i
+            for (( i=0; i<${#instances[*]}; i++ )); do
+                local RESULT=${DATPATH}/${DATE}/${DATETIME}-cmd.list.result.${instances[i]}
+                
+                S_SPLIT_LINE && S_JOB_INFO "当前执行实例为: ${user}@${instances[i]}"
+                
+                S_SSHX_MKDIR_EXPECT_WITHLOG ${user}@${instances[i]} ${EXPPATH} ${token} ${LOGFILE}
+                case "${?}" in
+                    0) 
+                        ;;
+                    *)
+                        S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPPATH} ${token} ${LOGFILE}
+                        continue
+                        ;;
+                esac
+                
+                S_SCP_UPLOAD_EXPECT_WITHLOG ${user}@${instances[i]} ${SPTFILE} ${token} ${LOGFILE}
+                S_SCP_UPLOAD_EXPECT_WITHLOG ${user}@${instances[i]} ${CNFFILE} ${token} ${LOGFILE}
+                S_SSHX_EXEC_EXPECT_WITHPARAM ${user}@${instances[i]} ${EXPFILE} ${token} ${LOGFILE} ${param}.conf
+                S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPPATH} ${token} ${RESULT} result_list
+            done
+        fi
+    else
+        ## "脚本"不存在，将"命令文件"按实例列表逐个执行
+        local EXPPATH=${SSHPATH}-${user}/${DATE}
+        local LOGFILE=${LOGPATH}/shery-exec-${DATETIME}.log
+        local SPTFILE=${DATPATH}/${DATE}/${DATETIME}-cmd.list
+        local EXPFILE=${SSHPATH}-${user}/${DATE}/${DATETIME}-cmd.list
+        local EXPRES=${SSHPATH}-${user}/${DATE}/${DATETIME}-cmd.list.result
+        
+        local i
+        for (( i=0; i<${#instances[*]}; i++ )); do
+            local RESULT=${DATPATH}/${DATE}/${DATETIME}-cmd.list.result.${instances[i]}
+            
+            S_SPLIT_LINE && S_JOB_INFO "当前执行实例为: ${user}@${instances[i]}"
+            
+            S_SSHX_MKDIR_EXPECT_WITHLOG ${user}@${instances[i]} ${EXPPATH} ${token} ${LOGFILE}
+            case "${?}" in
+                0) 
+                    ;;
+                *)
+                    S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPRES} ${token} ${RESULT} result_list
+                    continue
+                    ;;
+            esac
+            
+            S_SCP_UPLOAD_EXPECT_WITHLOG ${user}@${instances[i]} ${SPTFILE} ${token} ${LOGFILE}
+            S_SSHX_EXEC_EXPECT_WITHLOG ${user}@${instances[i]} ${EXPFILE} ${token} ${LOGFILE}
+            S_SSHX_RESULT_EXPECT ${user}@${instances[i]} ${EXPRES} ${token} ${RESULT} result_list
+        done
+    fi
+    
+    S_SPLIT_LINE
+    result_list[${#result_list[@]}]="执行过程详情请看日志文件: ${LOGPATH}/shery-exec-${DATETIME}.log"
+    S_SHOW_LIST result_list ## 统一展示执行结果
+    S_SPLIT_LINE
+}
+
+main $*
